@@ -1,0 +1,68 @@
+# app.py
+import streamlit as st
+import plotly.graph_objects as go
+from logic import get_stock_data, calculate_river
+
+# 設定頁面標題與寬度
+st.set_page_config(page_title="台股自動化估值系統", layout="wide")
+
+st.title("📈 台股價值河流圖分析")
+st.markdown("本系統採用 **動態本益比標準差通道** 來判斷股價位階。")
+
+# 側邊欄
+sidebar = st.sidebar
+sidebar.header("參數設定")
+stock_id = sidebar.text_input("輸入股票代號", "2330")
+st.sidebar.markdown("---")
+st.sidebar.info("資料來源: FinMind Open Data")
+
+if st.button("開始分析") or stock_id:
+    with st.spinner(f"正在分析 {stock_id} 的數據..."):
+        # 獲取數據 (純 API 模式)
+        df = get_stock_data(stock_id)
+        
+        if df is None or len(df) < 250:
+            st.error(f"無法獲取 {stock_id} 足夠的數據，請確認代號是否正確或該股上市時間太短。")
+        else:
+            # 運算
+            df = calculate_river(df)
+            latest = df.iloc[-1]
+            
+            # --- 1. 關鍵數據指標 ---
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("目前股價", f"{latest['close_price']:.2f}")
+            col2.metric("本益比 (PE)", f"{latest['PER']:.2f}")
+            col3.metric("股價淨值比 (PB)", f"{latest['PBR']:.2f}")
+            
+            # 判斷位階
+            status = "合理"
+            if latest['close_price'] < latest['river_low_1sd']: status = "低估 (便宜)"
+            if latest['close_price'] > latest['river_high_1sd']: status = "高估 (昂貴)"
+            col4.metric("當前位階評價", status)
+
+            # --- 2. 繪製互動式圖表 ---
+            fig = go.Figure()
+
+            # 繪製區間 (由上而下)
+            x_axis = df['date']
+            
+            # 紅色高估區
+            fig.add_trace(go.Scatter(x=x_axis, y=df['river_high_2sd'], mode='lines', line=dict(width=0), name='+2SD'))
+            fig.add_trace(go.Scatter(x=x_axis, y=df['river_high_1sd'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(255, 0, 0, 0.2)', name='昂貴區'))
+            
+            # 黃色合理區 (上半部)
+            fig.add_trace(go.Scatter(x=x_axis, y=df['river_mean'], mode='lines', line=dict(color='gray', dash='dash', width=1), fill='tonexty', fillcolor='rgba(255, 165, 0, 0.1)', name='平均值'))
+            
+            # 綠色低估區 (下半部)
+            fig.add_trace(go.Scatter(x=x_axis, y=df['river_low_1sd'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.1)', name='合理偏低'))
+            fig.add_trace(go.Scatter(x=x_axis, y=df['river_low_2sd'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(0, 255, 0, 0.3)', name='便宜區'))
+
+            # 收盤價
+            fig.add_trace(go.Scatter(x=x_axis, y=df['close_price'], mode='lines', line=dict(color='black', width=2), name='收盤價'))
+
+            fig.update_layout(title=f"{stock_id} 本益比河流圖 (近5年)", hovermode="x unified", height=600)
+            st.plotly_chart(fig, use_container_width=True)
+
+            # --- 3. 顯示數據表格 ---
+            with st.expander("查看詳細歷史數據"):
+                st.dataframe(df.sort_values('date', ascending=False).head(100))
