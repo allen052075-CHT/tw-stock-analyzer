@@ -65,4 +65,5 @@ if st.button("開始分析") or stock_id:
 
             # --- 3. 顯示數據表格 ---
             with st.expander("查看詳細歷史數據"):
+
                 st.dataframe(df.sort_values('date', ascending=False).head(100))
